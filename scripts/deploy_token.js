@@ -1,6 +1,6 @@
 const MyToken = artifacts.require("MyToken");
 const LPToken = artifacts.require("LPToken");
-const LiquidityPool = artifacts.require("LiquidityPool");
+const LiquidityPool = artifacts.require("LiquidityPool");a
 
 module.exports = async function (deployer) {
   await deployer.deploy(MyToken, "My Token", "MTK");
