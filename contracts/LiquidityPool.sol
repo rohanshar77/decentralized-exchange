@@ -5,12 +5,10 @@ import "./MyToken.sol";
 import "./LPToken.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 
 // fully functional liquidity pool that allows users to add liquidity, remove liquidity, and perform token swaps based on the x*y=k constant product formula
 contract LiquidityPool {
     using SafeERC20 for IERC20;
-    using SafeMath for uint256;
 
     IERC20 public tokenA;
     IERC20 public tokenB;
@@ -25,6 +23,10 @@ contract LiquidityPool {
         lpToken = new LPToken("Liquidity Pool Token", "LPT");
     }
 
+    function balanceOf(address account) public view returns (uint256) {
+        return lpToken.balanceOf(account);
+    }
+
     // allows users to add liquidity to the pool by depositing an equal value of Token A and Token B
     function addLiquidity(uint256 amountA, uint256 amountB) external {
         require(amountA > 0 && amountB > 0, "Amounts must be greater than zero");
@@ -34,11 +36,11 @@ contract LiquidityPool {
 
         // calculates amount of LP tokens to mint based on the ratio of provided liquidity : existing reserves
         if (lpTokenSupply == 0) {
-            liquidity = sqrt(amountA.mul(amountB));
+            liquidity = sqrt(amountA * amountB);
         } else {
             liquidity = min(
-                amountA.mul(lpTokenSupply).div(reserveA),
-                amountB.mul(lpTokenSupply).div(reserveB)
+                (amountA * lpTokenSupply) / reserveA,
+                (amountB * lpTokenSupply) / reserveB
             );
         }
 
@@ -57,10 +59,10 @@ contract LiquidityPool {
     function removeLiquidity(uint256 lpAmount) external {
         require(lpAmount > 0, "Amount must be greater than zero");
 
-        // calculates proportional amount of Tokens A and B to transfer back to provider based on thr ratio of burned LP tokens : total supply
+        // calculates proportional amount of Tokens A and B to transfer back to provider based on the ratio of burned LP tokens : total supply
         uint256 lpTokenSupply = lpToken.totalSupply();
-        uint256 amountA = lpAmount.mul(reserveA).div(lpTokenSupply);
-        uint256 amountB = lpAmount.mul(reserveB).div(lpTokenSupply);
+        uint256 amountA = (lpAmount * reserveA) / lpTokenSupply;
+        uint256 amountB = (lpAmount * reserveB) / lpTokenSupply;
 
         require(amountA > 0 && amountB > 0, "Insufficient liquidity burned");
 
@@ -76,7 +78,7 @@ contract LiquidityPool {
     // calculates current exchange price of Token A in terms of Token B based on the x*y=k constant product formula
     function getPrice() external view returns (uint256) {
         require(reserveA > 0 && reserveB > 0, "Insufficient liquidity");
-        return reserveB.mul(1e18).div(reserveA);
+        return (reserveB * 1e18) / reserveA;
     }
 
     // allows users to swap one token for another based on the x*y=k constant product formula
@@ -106,11 +108,11 @@ contract LiquidityPool {
         require(reserveIn > 0 && reserveOut > 0, "Insufficient liquidity");
 
         // takes into account a 0.3% fee
-        uint256 amountInWithFee = amountIn.mul(997);
-        uint256 numerator = amountInWithFee.mul(reserveOut);
-        uint256 denominator = reserveIn.mul(1000).add(amountInWithFee);
+        uint256 amountInWithFee = amountIn * 997;
+        uint256 numerator = amountInWithFee * reserveOut;
+        uint256 denominator = (reserveIn * 1000) + amountInWithFee;
 
-        return numerator.div(denominator);
+        return numerator / denominator;
     }
 
     // calculate the amount of Token A required to receive a specific amount of Token B in a swap (and vice versa)
@@ -118,10 +120,10 @@ contract LiquidityPool {
         require(amountOut > 0, "Insufficient output amount");
         require(reserveIn > 0 && reserveOut > 0, "Insufficient liquidity");
 
-        uint256 numerator = reserveIn.mul(amountOut).mul(1000);
-        uint256 denominator = reserveOut.sub(amountOut).mul(997);
+        uint256 numerator = reserveIn * amountOut * 1000;
+        uint256 denominator = (reserveOut - amountOut) * 997;
 
-        return numerator.div(denominator).add(1);
+        return (numerator / denominator) + 1;
     }
 
     // retrieve the current reserves of Token A and Token B

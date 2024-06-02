@@ -2,6 +2,8 @@
   "dependencies": {
     "@openzeppelin/cli": "^2.8.2",
     "@openzeppelin/contracts": "^5.0.2",
+    "@trufflesuite/uws-js-unofficial": "^20.30.0-unofficial.0",
+    "ganache-cli": "^6.12.2",
     "web3": "^4.9.0"
   }
 }
