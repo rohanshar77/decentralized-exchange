@@ -3,8 +3,8 @@ pragma solidity ^0.8.0;
 
 import "./MyToken.sol";
 import "./LPToken.sol";
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "../node_modules/@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "../node_modules/@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 // fully functional liquidity pool that allows users to add liquidity, remove liquidity, and perform token swaps based on the x*y=k constant product formula
 contract LiquidityPool {
@@ -16,6 +16,9 @@ contract LiquidityPool {
 
     uint256 public reserveA;
     uint256 public reserveB;
+
+    event LiquidityAdded(uint256 amountA, uint256 amountB, uint256 liquidity);
+    event ReservesUpdated(uint256 reserveA, uint256 reserveB);
 
     constructor(address _tokenA, address _tokenB) {
         tokenA = IERC20(_tokenA);
@@ -34,75 +37,91 @@ contract LiquidityPool {
         uint256 lpTokenSupply = lpToken.totalSupply();
         uint256 liquidity;
 
-        // calculates amount of LP tokens to mint based on the ratio of provided liquidity : existing reserves
+        // calculates amount of LP tokens to mint based on the ratio of provided liquidity to existing liquidity
         if (lpTokenSupply == 0) {
             liquidity = sqrt(amountA * amountB);
         } else {
-            liquidity = min(
-                (amountA * lpTokenSupply) / reserveA,
-                (amountB * lpTokenSupply) / reserveB
-            );
+            liquidity = min(amountA * lpTokenSupply / reserveA, amountB * lpTokenSupply / reserveB);
         }
 
         require(liquidity > 0, "Insufficient liquidity minted");
 
+        // update reserves
+        reserveA += amountA;
+        reserveB += amountB;
+
+        // transfer tokens to the pool
         tokenA.safeTransferFrom(msg.sender, address(this), amountA);
         tokenB.safeTransferFrom(msg.sender, address(this), amountB);
 
+        // mint LP tokens to the provider
         lpToken.mint(msg.sender, liquidity);
 
-        reserveA = tokenA.balanceOf(address(this));
-        reserveB = tokenB.balanceOf(address(this));
+        emit LiquidityAdded(amountA, amountB, liquidity);
+        emit ReservesUpdated(reserveA, reserveB);
     }
 
-    // allows liquidity providers to withdraw their share of the pool by burning their LP tokens
-    function removeLiquidity(uint256 lpAmount) external {
-        require(lpAmount > 0, "Amount must be greater than zero");
+    // allows users to remove liquidity from the pool by burning LP tokens and receiving their share of the pool's reserves
+    function removeLiquidity(uint256 liquidity) external {
+        require(liquidity > 0, "Liquidity must be greater than zero");
 
-        // calculates proportional amount of Tokens A and B to transfer back to provider based on the ratio of burned LP tokens : total supply
         uint256 lpTokenSupply = lpToken.totalSupply();
-        uint256 amountA = (lpAmount * reserveA) / lpTokenSupply;
-        uint256 amountB = (lpAmount * reserveB) / lpTokenSupply;
+
+        uint256 amountA = liquidity * reserveA / lpTokenSupply;
+        uint256 amountB = liquidity * reserveB / lpTokenSupply;
 
         require(amountA > 0 && amountB > 0, "Insufficient liquidity burned");
 
-        lpToken.burn(msg.sender, lpAmount);
+        reserveA -= amountA;
+        reserveB -= amountB;
 
+        // transfer tokens back to the provider
         tokenA.safeTransfer(msg.sender, amountA);
         tokenB.safeTransfer(msg.sender, amountB);
 
-        reserveA = tokenA.balanceOf(address(this));
-        reserveB = tokenB.balanceOf(address(this));
+        // burn LP tokens from the provider
+        lpToken.burn(msg.sender, liquidity);
+
+        emit ReservesUpdated(reserveA, reserveB);
     }
 
-    // calculates current exchange price of Token A in terms of Token B based on the x*y=k constant product formula
-    function getPrice() external view returns (uint256) {
-        require(reserveA > 0 && reserveB > 0, "Insufficient liquidity");
-        return (reserveB * 1e18) / reserveA;
-    }
-
-    // allows users to swap one token for another based on the x*y=k constant product formula
+    // allows users to swap one token for another based on the constant product formula
     function swap(address tokenIn, uint256 amountIn) external {
-        require(tokenIn == address(tokenA) || tokenIn == address(tokenB), "Invalid token");
         require(amountIn > 0, "Amount must be greater than zero");
 
         bool isTokenA = tokenIn == address(tokenA);
-        (IERC20 tokenInContract, IERC20 tokenOutContract, uint256 reserveIn, uint256 reserveOut) = isTokenA
-            ? (tokenA, tokenB, reserveA, reserveB)
-            : (tokenB, tokenA, reserveB, reserveA);
+        bool isTokenB = tokenIn == address(tokenB);
 
-        tokenInContract.safeTransferFrom(msg.sender, address(this), amountIn);
+        require(isTokenA || isTokenB, "Invalid token address");
+
+        (uint256 reserveIn, uint256 reserveOut, IERC20 tokenOut) = isTokenA
+            ? (reserveA, reserveB, tokenB)
+            : (reserveB, reserveA, tokenA);
 
         uint256 amountOut = getAmountOut(amountIn, reserveIn, reserveOut);
+
         require(amountOut > 0, "Insufficient output amount");
 
-        tokenOutContract.safeTransfer(msg.sender, amountOut);
+        // update reserves
+        reserveIn += amountIn;
+        reserveOut -= amountOut;
 
-        reserveA = tokenA.balanceOf(address(this));
-        reserveB = tokenB.balanceOf(address(this));
+        if (isTokenA) {
+            reserveA = reserveIn;
+            reserveB = reserveOut;
+        } else {
+            reserveA = reserveOut;
+            reserveB = reserveIn;
+        }
+
+        // transfer tokens
+        IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
+        tokenOut.safeTransfer(msg.sender, amountOut);
+
+        emit ReservesUpdated(reserveA, reserveB);
     }
 
-    // implements x*y=k constant product formula to calculate amount of tokens to receive in a swap
+    // calculate the amount of Token B received for a specific amount of Token A in a swap (and vice versa)
     function getAmountOut(uint256 amountIn, uint256 reserveIn, uint256 reserveOut) public pure returns (uint256) {
         require(amountIn > 0, "Insufficient input amount");
         require(reserveIn > 0 && reserveOut > 0, "Insufficient liquidity");
